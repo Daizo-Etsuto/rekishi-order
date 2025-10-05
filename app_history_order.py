@@ -92,7 +92,6 @@ ss.setdefault("current_questions", [])
 ss.setdefault("selected_events", [])
 ss.setdefault("remaining_events", [])
 ss.setdefault("q_start_time", time.time())
-ss.setdefault("segment_start", time.time())
 ss.setdefault("total_elapsed_before_run", 0)
 ss.setdefault("user_name", "")
 ss.setdefault("last_result", None)
@@ -105,7 +104,6 @@ def human_time(sec: int) -> str:
 
 def start_run(num_questions: int):
     ss.total_elapsed_before_run = int(ss.total_elapsed)
-    ss.segment_start = time.time()
     ss.q_start_time = time.time()
     ss.run_total_questions = num_questions
     ss.run_answered = 0
@@ -144,27 +142,13 @@ def prepare_csv():
 # ==== メニュー ====
 if ss.phase == "menu":
     st.subheader("問題数を選んでください")
-
-    choice = st.radio(
-        "出題数を選択",
-        ["5題", "10題", "好きな数"],
-        index=0,
-        horizontal=True,
-    )
-
+    choice = st.radio("出題数を選択", ["5題", "10題", "好きな数"], index=0, horizontal=True)
     if choice == "好きな数":
-        num = st.number_input(
-            "好きな数を入力",
-            min_value=1,
-            max_value=len(df),
-            value=min(5, len(df)),
-            step=1,
-        )
+        num = st.number_input("好きな数を入力", min_value=1, max_value=len(df), value=min(5, len(df)), step=1)
         selected_n = int(num)
     else:
         selected_n = 5 if choice == "5題" else 10
         selected_n = min(selected_n, len(df))
-
     if st.button("開始", use_container_width=True):
         start_run(selected_n)
         st.rerun()
@@ -200,7 +184,6 @@ if ss.phase == "quiz" and ss.current_questions is not None:
                 ss.remaining_events.append(last)
                 st.rerun()
 
-    # ==== 採点 ====
     if st.button("採点"):
         elapsed_q = int(time.time() - ss.q_start_time)
         correct_df = ss.current_questions.sort_values("年号")
@@ -208,32 +191,45 @@ if ss.phase == "quiz" and ss.current_questions is not None:
         correct_with_year = [f"{r['出来事']}（{r['年号']}）" for _, r in correct_df.iterrows()]
         answer_status = "正解" if ss.selected_events == correct_order else "不正解"
 
-        # 履歴に追加
-        ss.history.append({
-            "歴史並替": ss.current_group,
-            "出来事": " ➞ ".join(ss.selected_events),
-            "年号": " / ".join(map(str, correct_df["年号"])),
-            "正誤": answer_status,
-            "所要時間": human_time(elapsed_q),
-        })
-
-        ss.total_elapsed += elapsed_q
-        ss.run_answered += 1
-
-        if answer_status == "正解":
-            st.success("✅ 正解！")
-        else:
-            st.error("❌ 不正解…")
-            st.info("正しい順序: " + " ➞ ".join(correct_with_year))
-
-        # 最終問題なら自動的に結果画面へ
-        if ss.run_answered >= ss.run_total_questions:
-            ss.phase = "done"
-        else:
-            next_question()
+        ss.last_result = {
+            "status": answer_status,
+            "correct_with_year": correct_with_year,
+            "elapsed": elapsed_q,
+        }
+        ss.phase = "result"
         st.rerun()
 
-# ==== 結果画面 ====
+# ==== 採点結果フェーズ ====
+if ss.phase == "result" and ss.last_result:
+    res = ss.last_result
+    elapsed_q = res["elapsed"]
+    correct_df = ss.current_questions.sort_values("年号")
+
+    if res["status"] == "正解":
+        st.success("✅ 正解！")
+    else:
+        st.error("❌ 不正解…")
+        st.info("正しい順序: " + " ➞ ".join(res["correct_with_year"]))
+
+    ss.history.append({
+        "歴史並替": ss.current_group,
+        "出来事": " ➞ ".join(ss.selected_events),
+        "年号": " / ".join(map(str, correct_df["年号"])),
+        "正誤": res["status"],
+        "所要時間": human_time(elapsed_q),
+    })
+    ss.total_elapsed += elapsed_q
+    ss.run_answered += 1
+
+    # 2秒間結果を表示してから次へ
+    time.sleep(2)
+    if ss.run_answered >= ss.run_total_questions:
+        ss.phase = "done"
+    else:
+        next_question()
+    st.rerun()
+
+# ==== 結果 ====
 if ss.phase == "done":
     st.success("全問終了！お疲れさまでした🎉")
     this_run_seconds = int(ss.total_elapsed - ss.total_elapsed_before_run)
