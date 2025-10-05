@@ -47,12 +47,12 @@ st.markdown("<h1 style='font-size:22px;'>年表並べ替えクイズ（CSV版・
 
 # ==== ファイルアップロード ====
 uploaded_file = st.file_uploader(
-    "年表データ（CSV, UTF-8推奨, 列名：歴史並替・出来事・年号・所要時間・累計時間）をアップロードしてください （利用期限25-10-31）",
+    "年表データ（CSV, UTF-8推奨, 列名：出来事・年号）をアップロードしてください （利用期限25-10-31）",
     type=["csv"],
     key="file_uploader",
 )
 
-# ==== 初期化関数 ====
+# ==== 初期化 ====
 def reset_all(keep_history=False):
     keep_keys = {"file_uploader"}
     if keep_history:
@@ -72,17 +72,19 @@ try:
 except UnicodeDecodeError:
     df = pd.read_csv(uploaded_file, encoding="shift-jis")
 
-required_cols = {"歴史並替", "出来事", "年号"}
+required_cols = {"出来事", "年号"}
 if not required_cols.issubset(df.columns):
-    st.error("CSVには『歴史並替』『出来事』『年号』列が必要です。")
+    st.error("CSVには『出来事』『年号』列が必要です。")
     st.stop()
+
+# ==== 分類番号付与 ====
+df["歴史並替"] = "分類" + (df.index // 10 + 1).astype(str)
 
 # ==== セッション初期化 ====
 ss = st.session_state
 ss.setdefault("phase", "menu")
 ss.setdefault("history", [])
 ss.setdefault("total_elapsed", 0)
-ss.setdefault("question_pool", [])
 ss.setdefault("run_total_questions", 0)
 ss.setdefault("run_answered", 0)
 ss.setdefault("current_group", None)
@@ -104,7 +106,6 @@ def start_run(num_questions: int):
     ss.total_elapsed_before_run = int(ss.total_elapsed)
     ss.segment_start = time.time()
     ss.q_start_time = time.time()
-    ss.history = []
     ss.run_total_questions = num_questions
     ss.run_answered = 0
     next_question()
@@ -127,7 +128,7 @@ def prepare_csv():
     history_df = pd.DataFrame(ss.history)
     total_seconds = int(ss.total_elapsed)
     history_df["累計時間"] = human_time(total_seconds)
-    desired_cols = ["歴史並替", "出来事", "年号", "所要時間", "累計時間"]
+    desired_cols = ["歴史並替", "出来事", "年号", "正誤", "所要時間", "累計時間"]
     for c in desired_cols:
         if c not in history_df.columns:
             history_df[c] = pd.NA
@@ -142,14 +143,33 @@ def prepare_csv():
 # ==== メニュー ====
 if ss.phase == "menu":
     st.subheader("問題数を選んでください")
-    choice = st.radio("出題数を選択", ["5題", "10題"], index=0, horizontal=True)
-    selected_n = 5 if choice == "5題" else 10
+
+    choice = st.radio(
+        "出題数を選択",
+        ["5題", "10題", "好きな数"],
+        index=0,
+        horizontal=True,
+    )
+
+    if choice == "好きな数":
+        num = st.number_input(
+            "好きな数を入力",
+            min_value=1,
+            max_value=len(df),
+            value=min(5, len(df)),
+            step=1,
+        )
+        selected_n = int(num)
+    else:
+        selected_n = 5 if choice == "5題" else 10
+        selected_n = min(selected_n, len(df))
+
     if st.button("開始", use_container_width=True):
         start_run(selected_n)
         st.rerun()
     st.stop()
 
-# ==== クイズ出題 ====
+# ==== クイズ ====
 if ss.phase == "quiz" and ss.current_questions is not None:
     st.markdown(f"<div class='progress'>進捗: {ss.run_answered+1}/{ss.run_total_questions} 問</div>", unsafe_allow_html=True)
     st.subheader(f"分類番号: {ss.current_group}")
@@ -165,7 +185,8 @@ if ss.phase == "quiz" and ss.current_questions is not None:
 
     st.write("あなたの並べ替え:", " ➞ ".join(ss.selected_events))
 
-    c1, c2, c3 = st.columns([1, 1, 1], gap="small")
+    # ==== 操作ボタン ====
+    c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("やり直し"):
             shuffled = list(ss.current_questions["出来事"].sample(frac=1))
@@ -178,34 +199,51 @@ if ss.phase == "quiz" and ss.current_questions is not None:
                 last = ss.selected_events.pop()
                 ss.remaining_events.append(last)
                 st.rerun()
-    with c3:
-        if st.button("採点"):
-            elapsed_q = int(time.time() - ss.q_start_time)
-            correct_order = list(ss.current_questions.sort_values("年号")["出来事"])
-            if ss.selected_events == correct_order:
-                st.success("✅ 正解！")
-                status = "正解"
-            else:
-                st.error("❌ 不正解…")
-                st.info("正しい順序: " + " ➞ ".join(correct_order))
-                status = "不正解"
 
+    # ==== 採点 ====
+    if st.button("採点"):
+        elapsed_q = int(time.time() - ss.q_start_time)
+        correct_df = ss.current_questions.sort_values("年号")
+        correct_order = list(correct_df["出来事"])
+        correct_with_year = [f"{r['出来事']}（{r['年号']}）" for _, r in correct_df.iterrows()]
+        answer_status = "正解" if ss.selected_events == correct_order else "不正解"
+
+        if answer_status == "正解":
+            st.success("✅ 正解！")
+            ss.run_answered += 1
+            ss.total_elapsed += elapsed_q
             ss.history.append({
                 "歴史並替": ss.current_group,
                 "出来事": " ➞ ".join(ss.selected_events),
-                "年号": " / ".join(map(str, ss.current_questions["年号"])),
-                "所要時間": human_time(elapsed_q)
+                "年号": " / ".join(map(str, correct_df["年号"])),
+                "正誤": "正解",
+                "所要時間": human_time(elapsed_q),
             })
-            ss.total_elapsed += elapsed_q
-            ss.run_answered += 1
-
             if ss.run_answered >= ss.run_total_questions:
                 ss.phase = "done"
             else:
                 next_question()
             st.rerun()
+        else:
+            st.error("❌ 不正解…")
+            st.info("正しい順序: " + " ➞ ".join(correct_with_year))
+            ss.history.append({
+                "歴史並替": ss.current_group,
+                "出来事": " ➞ ".join(ss.selected_events),
+                "年号": " / ".join(map(str, correct_df["年号"])),
+                "正誤": "不正解",
+                "所要時間": human_time(elapsed_q),
+            })
+            ss.total_elapsed += elapsed_q
+            if st.button("次の問題"):
+                ss.run_answered += 1
+                if ss.run_answered >= ss.run_total_questions:
+                    ss.phase = "done"
+                else:
+                    next_question()
+                st.rerun()
 
-# ==== 全問終了 ====
+# ==== 終了 ====
 if ss.phase == "done":
     st.success("全問終了！お疲れさまでした🎉")
     this_run_seconds = int(ss.total_elapsed - ss.total_elapsed_before_run)
@@ -223,9 +261,6 @@ if ss.phase == "done":
     with c1:
         if st.button("もう一回"):
             ss.phase = "menu"
-            for k in ["current_group", "current_questions", "selected_events", "remaining_events", "run_answered", "total_elapsed_before_run"]:
-                if k in ss:
-                    del ss[k]
             st.rerun()
     with c2:
         if st.button("終了"):
