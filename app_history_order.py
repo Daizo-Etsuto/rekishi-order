@@ -208,57 +208,32 @@ if ss.phase == "quiz" and ss.current_questions is not None:
         correct_with_year = [f"{r['出来事']}（{r['年号']}）" for _, r in correct_df.iterrows()]
         answer_status = "正解" if ss.selected_events == correct_order else "不正解"
 
-        ss.last_result = {
-            "status": answer_status,
-            "correct_with_year": correct_with_year,
-            "elapsed": elapsed_q,
-        }
-        ss.phase = "result"
-        st.rerun()
-
-# ==== 結果フェーズ ====
-if ss.phase == "result" and ss.last_result:
-    res = ss.last_result
-    elapsed_q = res["elapsed"]
-
-    if res["status"] == "正解":
-        st.success("✅ 正解！")
+        # 履歴に追加
         ss.history.append({
             "歴史並替": ss.current_group,
             "出来事": " ➞ ".join(ss.selected_events),
-            "年号": " / ".join(map(str, ss.current_questions["年号"])),
-            "正誤": "正解",
+            "年号": " / ".join(map(str, correct_df["年号"])),
+            "正誤": answer_status,
             "所要時間": human_time(elapsed_q),
         })
+
         ss.total_elapsed += elapsed_q
         ss.run_answered += 1
+
+        if answer_status == "正解":
+            st.success("✅ 正解！")
+        else:
+            st.error("❌ 不正解…")
+            st.info("正しい順序: " + " ➞ ".join(correct_with_year))
+
+        # 最終問題なら自動的に結果画面へ
         if ss.run_answered >= ss.run_total_questions:
             ss.phase = "done"
         else:
             next_question()
         st.rerun()
 
-    else:
-        st.error("❌ 不正解…")
-        st.info("正しい順序: " + " ➞ ".join(res["correct_with_year"]))
-        ss.history.append({
-            "歴史並替": ss.current_group,
-            "出来事": " ➞ ".join(ss.selected_events),
-            "年号": " / ".join(map(str, ss.current_questions["年号"])),
-            "正誤": "不正解",
-            "所要時間": human_time(elapsed_q),
-        })
-        ss.total_elapsed += elapsed_q
-
-        if st.button("次の問題"):
-            ss.run_answered += 1
-            if ss.run_answered >= ss.run_total_questions:
-                ss.phase = "done"
-            else:
-                next_question()
-            st.rerun()
-
-# ==== 終了 ====
+# ==== 結果画面 ====
 if ss.phase == "done":
     st.success("全問終了！お疲れさまでした🎉")
     this_run_seconds = int(ss.total_elapsed - ss.total_elapsed_before_run)
