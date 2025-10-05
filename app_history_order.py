@@ -95,6 +95,7 @@ ss.setdefault("q_start_time", time.time())
 ss.setdefault("segment_start", time.time())
 ss.setdefault("total_elapsed_before_run", 0)
 ss.setdefault("user_name", "")
+ss.setdefault("last_result", None)
 
 # ==== ユーティリティ ====
 def human_time(sec: int) -> str:
@@ -185,7 +186,6 @@ if ss.phase == "quiz" and ss.current_questions is not None:
 
     st.write("あなたの並べ替え:", " ➞ ".join(ss.selected_events))
 
-    # ==== 操作ボタン ====
     c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("やり直し"):
@@ -208,50 +208,17 @@ if ss.phase == "quiz" and ss.current_questions is not None:
         correct_with_year = [f"{r['出来事']}（{r['年号']}）" for _, r in correct_df.iterrows()]
         answer_status = "正解" if ss.selected_events == correct_order else "不正解"
 
-        if answer_status == "正解":
-            st.success("✅ 正解！")
-            ss.run_answered += 1
-            ss.total_elapsed += elapsed_q
-            ss.history.append({
-                "歴史並替": ss.current_group,
-                "出来事": " ➞ ".join(ss.selected_events),
-                "年号": " / ".join(map(str, correct_df["年号"])),
-                "正誤": "正解",
-                "所要時間": human_time(elapsed_q),
-            })
-            if ss.run_answered >= ss.run_total_questions:
-                ss.phase = "done"
-            else:
-                next_question()
-            st.rerun()
-        else:
-            st.error("❌ 不正解…")
-            st.info("正しい順序: " + " ➞ ".join(correct_with_year))
-            ss.history.append({
-                "歴史並替": ss.current_group,
-                "出来事": " ➞ ".join(ss.selected_events),
-                "年号": " / ".join(map(str, correct_df["年号"])),
-                "正誤": "不正解",
-                "所要時間": human_time(elapsed_q),
-            # ==== 採点 ====
-if ss.get("phase") == "quiz" and st.button("採点"):
-    elapsed_q = int(time.time() - ss.q_start_time)
-    correct_df = ss.current_questions.sort_values("年号")
-    correct_order = list(correct_df["出来事"])
-    correct_with_year = [f"{r['出来事']}（{r['年号']}）" for _, r in correct_df.iterrows()]
-    answer_status = "正解" if ss.selected_events == correct_order else "不正解"
+        ss.last_result = {
+            "status": answer_status,
+            "correct_with_year": correct_with_year,
+            "elapsed": elapsed_q,
+        }
+        ss.phase = "result"
+        st.rerun()
 
-    ss["last_result"] = {
-        "status": answer_status,
-        "correct_with_year": correct_with_year,
-        "elapsed": elapsed_q,
-    }
-    ss.phase = "result"
-    st.rerun()
-
-# ==== 結果表示フェーズ ====
-if ss.phase == "result":
-    res = ss["last_result"]
+# ==== 結果フェーズ ====
+if ss.phase == "result" and ss.last_result:
+    res = ss.last_result
     elapsed_q = res["elapsed"]
 
     if res["status"] == "正解":
@@ -289,4 +256,29 @@ if ss.phase == "result":
                 ss.phase = "done"
             else:
                 next_question()
+            st.rerun()
+
+# ==== 終了 ====
+if ss.phase == "done":
+    st.success("全問終了！お疲れさまでした🎉")
+    this_run_seconds = int(ss.total_elapsed - ss.total_elapsed_before_run)
+    st.info(f"今回の所要時間: {human_time(this_run_seconds)}")
+    st.info(f"累計総時間: {human_time(int(ss.total_elapsed))}")
+
+    st.subheader("学習履歴の保存")
+    ss.user_name = st.text_input("氏名を入力してください", value=ss.user_name)
+
+    if ss.user_name:
+        filename, csv_data = prepare_csv()
+        st.download_button("📥 保存（ダウンロード）", data=csv_data, file_name=filename, mime="text/csv")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("もう一回"):
+            ss.phase = "menu"
+            st.rerun()
+    with c2:
+        if st.button("終了"):
+            reset_all(keep_history=False)
+            ss.phase = "menu"
             st.rerun()
